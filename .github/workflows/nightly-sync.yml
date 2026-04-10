@@ -18,11 +18,22 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install dependencies
+        run: npm install
+
+      - name: Download agent state from previous run
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: agent-state
+
       - name: Run nightly sync agent
         run: node agent.js
-        working-directory: ./
         env:
           NODE_ENV: production
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          RESEND_KEY: ${{ secrets.RESEND_KEY }}
 
       - name: Upload memory store ID (persist between runs)
         uses: actions/upload-artifact@v4
@@ -33,9 +44,3 @@ jobs:
             memory_store_id.txt
             agent_id.txt
           retention-days: 365
-
-      - name: Download agent state from previous run
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: agent-state
