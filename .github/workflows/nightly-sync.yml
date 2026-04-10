@@ -11,18 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install
 
       - name: Download agent state from previous run
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         continue-on-error: true
         with:
           name: agent-state
@@ -36,7 +36,7 @@ jobs:
           RESEND_KEY: ${{ secrets.RESEND_KEY }}
 
       - name: Upload memory store ID (persist between runs)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: agent-state
@@ -44,4 +44,4 @@ jobs:
             memory_store_id.txt
             agent_id.txt
             environment_id.txt
-          retention-days: 365
+          retention-days: 90
