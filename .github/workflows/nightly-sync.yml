@@ -1,0 +1,41 @@
+name: Brandon's Board — Nightly Memory Sync
+
+on:
+  schedule:
+    # 11 PM Eastern Time = 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  nightly-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run nightly sync agent
+        run: node agent.js
+        working-directory: ./
+        env:
+          NODE_ENV: production
+
+      - name: Upload memory store ID (persist between runs)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-state
+          path: |
+            memory_store_id.txt
+            agent_id.txt
+          retention-days: 365
+
+      - name: Download agent state from previous run
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: agent-state

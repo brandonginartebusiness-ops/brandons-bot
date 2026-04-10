@@ -1,0 +1,13 @@
+{
+  "name": "brandons-board-agent",
+  "version": "1.0.0",
+  "description": "Nightly memory sync agent for Brandon's Board using Anthropic Managed Agents",
+  "main": "agent.js",
+  "scripts": {
+    "sync": "node agent.js",
+    "test": "node agent.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
