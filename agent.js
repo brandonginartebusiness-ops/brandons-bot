@@ -35,7 +35,12 @@ async function sbFetch(path, query = "") {
       Authorization: `Bearer ${SUPABASE_KEY}`
     }
   });
-  return res.json();
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    console.error(`sbFetch(${path}${query}) returned non-array:`, data);
+    return [];
+  }
+  return data;
 }
 
 async function fetchTodayData() {
@@ -74,7 +79,8 @@ async function getOrCreateMemoryStore() {
   });
 
   const store = await res.json();
-  console.log("Memory store created:", store.id);
+  console.log("Memory store response:", JSON.stringify(store));
+  if (!store.id) throw new Error("Memory store creation failed: " + JSON.stringify(store));
   fs.writeFileSync(MEMORY_STORE_ID_FILE, store.id);
   return store.id;
 }
