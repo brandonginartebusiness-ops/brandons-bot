@@ -16,10 +16,13 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const RESEND_KEY = process.env.RESEND_KEY;
 const RECIPIENT_EMAIL = "brandonginartebusiness@gmail.com";
 const MEMORY_STORE_ID_FILE = "./memory_store_id.txt";
+const ENVIRONMENT_ID_FILE = "./environment_id.txt";
 
 const BASE_HEADERS = {
   "x-api-key": ANTHROPIC_API_KEY,
   "anthropic-version": "2023-06-01",
+  // Memory is a Research Preview feature — may need an additional beta header once
+  // access is granted. Base managed-agents header is required for all endpoints.
   "anthropic-beta": "managed-agents-2026-04-01",
   "content-type": "application/json"
 };
@@ -130,7 +133,33 @@ async function seedMemoryStore(storeId, data) {
   console.log("Memory store seeded with initial data.");
 }
 
-// ─── Agent session ───────────────────────────────────────────────────────────
+// ─── Environment ─────────────────────────────────────────────────────────────
+
+async function getOrCreateEnvironment() {
+  if (fs.existsSync(ENVIRONMENT_ID_FILE)) {
+    const id = fs.readFileSync(ENVIRONMENT_ID_FILE, "utf8").trim();
+    console.log(`Using existing environment: ${id}`);
+    return id;
+  }
+
+  console.log("Creating environment...");
+  const res = await fetch("https://api.anthropic.com/v1/environments", {
+    method: "POST",
+    headers: BASE_HEADERS,
+    body: JSON.stringify({
+      name: "brandons-board-sync",
+      config: { type: "cloud", networking: { type: "unrestricted" } }
+    })
+  });
+
+  const env = await res.json();
+  console.log("Environment response:", JSON.stringify(env));
+  if (!env.id) throw new Error("Environment creation failed: " + JSON.stringify(env));
+  fs.writeFileSync(ENVIRONMENT_ID_FILE, env.id);
+  return env.id;
+}
+
+// ─── Agent ───────────────────────────────────────────────────────────────────
 
 async function getOrCreateAgent() {
   const AGENT_ID_FILE = "./agent_id.txt";
@@ -147,8 +176,8 @@ async function getOrCreateAgent() {
     headers: BASE_HEADERS,
     body: JSON.stringify({
       name: "Brandon's Board Daily Sync",
-      model: "claude-sonnet-4-20250514",
-      system_prompt: `You are Brandon Ginarte's personal productivity agent. Brandon is a 21-year-old creative entrepreneur in Miami running Rollinshotz — a photography, videography, web design, marketing, and lead generation business.
+      model: { id: "claude-sonnet-4-6" },
+      system: `You are Brandon Ginarte's personal productivity agent. Brandon is a 21-year-old creative entrepreneur in Miami running Rollinshotz — a photography, videography, web design, marketing, and lead generation business.
 
 Your job when activated each night is to:
 1. Review the data provided about today's activity (completed tasks, brain dumps, client status)
@@ -159,17 +188,19 @@ Your job when activated each night is to:
    - Update /goals.md with patterns or next steps you notice
 3. Be concise, factual, and write in third person ("Brandon completed...")
 
-Always check memory before writing to avoid duplication. Use memory_search to find relevant existing context.`
+Always check memory before writing to avoid duplication. Use memory_search to find relevant existing context.`,
+      tools: [{ type: "agent_toolset_20260401" }]
     })
   });
 
   const agent = await res.json();
-  console.log("Agent created:", agent.id);
+  console.log("Agent response:", JSON.stringify(agent));
+  if (!agent.id) throw new Error("Agent creation failed: " + JSON.stringify(agent));
   fs.writeFileSync(AGENT_ID_FILE, agent.id);
   return agent.id;
 }
 
-async function runAgentSession(agentId, storeId, data) {
+async function runAgentSession(agentId, environmentId, storeId, data) {
   const { tasks, dumps, clients } = data;
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const dateSlug = new Date().toISOString().slice(0, 10);
@@ -207,42 +238,54 @@ Please:
 
 Be concise. Write in third person.`;
 
-  console.log("Starting agent session...");
+  // Create session — "agent" (not "agent_id"), requires environment_id
+  console.log("Creating agent session...");
+  const sessionBody = {
+    agent: agentId,
+    environment_id: environmentId
+  };
+  // Attach memory store if we have one (Research Preview — may not be available)
+  if (storeId) {
+    sessionBody.resources = [{
+      type: "memory_store",
+      memory_store_id: storeId,
+      access: "read_write",
+      prompt: "Brandon's persistent context — profile, clients, finances, daily logs. Check before writing. Update after every session."
+    }];
+  }
   const sessionRes = await fetch("https://api.anthropic.com/v1/sessions", {
     method: "POST",
     headers: BASE_HEADERS,
-    body: JSON.stringify({
-      agent_id: agentId,
-      resources: [
-        {
-          type: "memory_store",
-          memory_store_id: storeId,
-          access: "read_write",
-          prompt: "Brandon's persistent context — profile, clients, finances, daily logs. Check before writing. Update after every session."
-        }
-      ]
-    })
+    body: JSON.stringify(sessionBody)
   });
 
   const session = await sessionRes.json();
-  console.log("Session started:", session.id);
+  console.log("Session response:", JSON.stringify(session));
+  if (!session.id) throw new Error("Session creation failed: " + JSON.stringify(session));
+  console.log("Session created:", session.id);
 
-  // Send the user message as an event
-  const eventRes = await fetch(`https://api.anthropic.com/v1/sessions/${session.id}/events`, {
+  // Send the user message — type is "user.message", content is array of content blocks
+  await fetch(`https://api.anthropic.com/v1/sessions/${session.id}/events`, {
     method: "POST",
     headers: BASE_HEADERS,
     body: JSON.stringify({
-      type: "user",
-      content: userMessage
+      events: [{
+        type: "user.message",
+        content: [{ type: "text", text: userMessage }]
+      }]
     })
   });
 
-  // Stream the response
+  // Stream responses from the separate /stream endpoint
   let fullText = "";
-  const reader = eventRes.body.getReader();
   const decoder = new TextDecoder();
 
   console.log("Agent running...");
+  const streamRes = await fetch(`https://api.anthropic.com/v1/sessions/${session.id}/stream`, {
+    headers: { ...BASE_HEADERS, "Accept": "text/event-stream" }
+  });
+
+  const reader = streamRes.body.getReader();
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -253,12 +296,17 @@ Be concise. Write in third person.`;
     for (const line of lines) {
       try {
         const event = JSON.parse(line.slice(5).trim());
-        if (event.type === "agent.text_delta") {
-          process.stdout.write(event.delta || "");
-          fullText += event.delta || "";
+        if (event.type === "agent.message") {
+          const text = (event.content || [])
+            .filter(b => b.type === "text")
+            .map(b => b.text)
+            .join("");
+          process.stdout.write(text);
+          fullText += text;
         }
-        if (event.type === "agent.done") {
+        if (event.type === "session.status_idle") {
           console.log("\n\nAgent session complete.");
+          break;
         }
       } catch {}
     }
@@ -329,17 +377,24 @@ async function main() {
     const data = await fetchTodayData();
     console.log(`Found: ${data.tasks?.length ?? "ERR"} completed tasks, ${data.dumps?.length ?? "ERR"} brain dumps, ${data.clients?.length ?? "ERR"} clients, ${data.finances?.length ?? "ERR"} finance rows`);
 
-    // 2. Get or create memory store
-    const storeId = await getOrCreateMemoryStore();
+    // 2. Get or create cloud environment
+    const environmentId = await getOrCreateEnvironment();
 
-    // 3. Seed store with initial data (no-ops if already exists)
-    await seedMemoryStore(storeId, data);
+    // 3. Get or create memory store (Research Preview — skip gracefully if unavailable)
+    let storeId = null;
+    try {
+      storeId = await getOrCreateMemoryStore();
+      await seedMemoryStore(storeId, data);
+    } catch (err) {
+      console.warn("Memory store unavailable (Research Preview access required):", err.message);
+      console.warn("Continuing without persistent memory.");
+    }
 
     // 4. Get or create agent
     const agentId = await getOrCreateAgent();
 
     // 5. Run agent session — reads Supabase context, writes memory
-    const { summary } = await runAgentSession(agentId, storeId, data);
+    const { summary } = await runAgentSession(agentId, environmentId, storeId, data);
 
     // 6. Send email digest
     await sendEmailSummary(summary, data);

@@ -43,4 +43,5 @@ jobs:
           path: |
             memory_store_id.txt
             agent_id.txt
+            environment_id.txt
           retention-days: 365
