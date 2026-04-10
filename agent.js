@@ -79,10 +79,11 @@ async function getOrCreateMemoryStore() {
   });
 
   const store = await res.json();
-  console.log("Memory store response:", JSON.stringify(store));
-  if (!store.id) throw new Error("Memory store creation failed: " + JSON.stringify(store));
-  fs.writeFileSync(MEMORY_STORE_ID_FILE, store.id);
-  return store.id;
+  console.log("Memory store full response:", JSON.stringify(store, null, 2));
+  const storeId = store.id || store.store_id || store.memory_store_id;
+  if (!storeId) throw new Error("Memory store creation failed — no id field found. Full response: " + JSON.stringify(store));
+  fs.writeFileSync(MEMORY_STORE_ID_FILE, storeId);
+  return storeId;
 }
 
 async function seedMemoryStore(storeId, data) {
@@ -326,7 +327,7 @@ async function main() {
     // 1. Fetch today's data from Supabase
     console.log("Fetching data from Supabase...");
     const data = await fetchTodayData();
-    console.log(`Found: ${data.tasks.length} completed tasks, ${data.dumps.length} brain dumps, ${data.clients.length} clients`);
+    console.log(`Found: ${data.tasks?.length ?? "ERR"} completed tasks, ${data.dumps?.length ?? "ERR"} brain dumps, ${data.clients?.length ?? "ERR"} clients, ${data.finances?.length ?? "ERR"} finance rows`);
 
     // 2. Get or create memory store
     const storeId = await getOrCreateMemoryStore();
